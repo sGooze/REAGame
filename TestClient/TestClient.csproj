@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp2.0</TargetFramework>
+    <ApplicationIcon />
+    <StartupObject />
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="ReaGameContext.cs" />
+    <Compile Remove="RemoteSession.cs" />
+    <Compile Remove="Users.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GameServer\RemoteSession.cs" Link="RemoteSession.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
+  </ItemGroup>
+
+</Project>
