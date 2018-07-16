@@ -8,6 +8,7 @@ using System.Text;
 using System.Runtime.InteropServices;
 using System.Linq;
 using System.Threading.Tasks;
+using ReaGame;
 
 namespace GameServer
 {
@@ -86,7 +87,7 @@ namespace GameServer
         bool active = false;
 
         public bool Status { get { return active; } }
-        private List<Session> activeSessions;
+        private List<IntermittentSession> activeSessions;
         private System.Threading.Timer sessionTimer;
 
         private void Listen()
@@ -104,12 +105,9 @@ namespace GameServer
                         continue;
                     }
                     TcpClient client = tcpListener.AcceptTcpClient();
-                    Session session = new Session(client);
                     //create a thread to handle communication
                     //with connected client
-                    Thread clientThread = new Thread(new ParameterizedThreadStart(HandleSession));
-                    clientThread.Name = String.Format("[{0}]", session.ID);
-                    clientThread.Start(session);
+                    Task newClientTask = Task.Run(() => HandleSession(new RemoteClient(client)));
                 }
             catch (InvalidOperationException) {
                     active = false;
@@ -120,7 +118,7 @@ namespace GameServer
         {
             lock (activeSessions)
             {
-                var timedOut = activeSessions.Where(x => ((DateTime.Now - x.LastActivity).TotalSeconds >= Session.timeout));
+                var timedOut = activeSessions.Where(x => ((DateTime.Now - x.LastActivity).TotalSeconds >= IntermittentSession.timeout));
                 foreach(var ses in timedOut)
                 {
                     ses.Close("Session timed out");
@@ -130,43 +128,59 @@ namespace GameServer
             }
         }
 
-        private void HandleSession(object clientSession)
+        static byte[] sessionNotFound = new byte[3] { (byte)ReaGame.RemoteSession.MsgType.No, 0, 0 };
+        private void HandleSession(RemoteClient client)
         {
-            //TcpClient tcpClient = (TcpClient)client;
-            Session session = (Session)clientSession;
-            activeSessions.Add(session);
-            Console.WriteLine("[{0}]: created, awaiting authentication...", session.ID);
-
-            // session handles client data transmission!
-            // send authentication request
-            // close session on failure
-
-            // Авторизация
-            if (!session.Authenticate()) {
-                Console.WriteLine("[{0}]: authentication failed, disconnected.", session.ID);
-                session.Close("Authentication failed");
-                activeSessions.Remove(session);
-                return;
-            }
-
-            // После успешной авторизации проверим, не активна ли другая сессия для этого же пользователя
-            foreach(var ses in activeSessions)
-            {
-                if ((ses.UserID == session.UserID) && (ses.Active))
+            IntermittentSession session = null;
+            // TODO: Порядковые номера сессий? (для отладки и сообщений на сервере)
+            //Console.WriteLine("[{0}]: created, awaiting authentication...", session.ID);
+            string body;
+            RemoteSession.MsgType loginMsg = (RemoteSession.MsgType)client.ReadMessage(out body);
+            
+            // TODO: Проверка на уникальность сессии при вводе логина-пароля? (если сессии такого пользователя уже есть, то закрываем их)
+            // TODO: Для новых пользователей отправляем уникальное сообщение об успешном входе, чтобы клиент мог отобразить справку (и т.п.)
+            if (loginMsg == ReaGame.RemoteSession.MsgType.Login) {
+                session = new IntermittentSession(client);
+                if (!session.Authenticate(body))
                 {
-                    if (ses.ID == session.ID) continue;
-                    Console.WriteLine("[{0}]: authentication failed, user {1} logged in on session {2}.", session.ID, session.UserID, ses.ID);
-                    session.Close(String.Format("Пользователь уже авторизован ({0})", ses.ID));
-                    activeSessions.Remove(session);
+                    Console.WriteLine("[{0}]: authentication failed, disconnected.", session.ID);
+                    session.SendMessage(RemoteSession.MsgType.No, "Invalid login or password.");
+                    session.Close();
                     return;
                 }
+                else {
+                    session.SendMessage(RemoteSession.MsgType.Login, session.ID.ToString());
+                    foreach (var ses in activeSessions)
+                    {
+                        if ((ses.UserID == session.UserID) && (ses.Active))
+                        {
+                            ses.Close();
+                        }
+                    }
+                }
+                // Check other sessions for this user id
+            }
+            else if (loginMsg == ReaGame.RemoteSession.MsgType.RestoreSession)
+            {
+                // TODO: Check for session state, base returned message on it
+                var ses = activeSessions.FirstOrDefault(x => x.ID == new Guid(body) && x.Active);
+                if ((session == null))
+                {
+                    Console.WriteLine("[{0}]: reconnection failed (using bad id {1}), disconnected.", session.ID, body);
+                    client.SendMessage((byte)RemoteSession.MsgType.No, "Session token invalid or obsolete.");
+                    client.Dispose();
+                    return;
+                }
+                else { session = ses; session.SendMessage(RemoteSession.MsgType.RestoreSession); }
             }
 
             Console.WriteLine("[{0}]: authentication completed.", session.ID);
-            session.SendMessage(Session.MsgType.Login, session.ID.ToString());
-            while (session.Active)
+            
+            activeSessions.Add(session);
+            session.Paused = false;
+            while (!session.Paused)
             {
-                session.Listen();
+                session.GetMessages();
             }
 
             //session.Close();
@@ -182,7 +196,7 @@ namespace GameServer
             tcpThread = new Thread(new ThreadStart(Listen));
             tcpThread.Name = "TCP Listen Thread";
             random = new Random();
-            activeSessions = new List<Session>();
+            activeSessions = new List<IntermittentSession>();
             sessionTimer = new Timer(this.MaintainSessionList, null, 1000, slist_timeout * 1000);
             tcpThread.Start();
         }
