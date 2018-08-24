@@ -132,10 +132,17 @@ namespace GameServer
         private void HandleSession(RemoteClient client)
         {
             IntermittentSession session = null;
-            // TODO: Порядковые номера сессий? (для отладки и сообщений на сервере)
-            //Console.WriteLine("[{0}]: created, awaiting authentication...", session.ID);
             string body;
-            RemoteSession.MsgType loginMsg = (RemoteSession.MsgType)client.ReadMessage(out body);
+
+            Console.WriteLine($"({client.ID}): new client connected");
+            RemoteSession.MsgType loginMsg = RemoteSession.MsgType.Null;
+            try { loginMsg = (RemoteSession.MsgType)client.ReadMessage(out body); }
+            catch (System.IO.IOException)
+            {
+                Console.WriteLine($"({client.ID}): login message hasn't arrived, disconnecting");
+                client.Close();
+                return;
+            }
             
             // TODO: Проверка на уникальность сессии при вводе логина-пароля? (если сессии такого пользователя уже есть, то закрываем их)
             // TODO: Для новых пользователей отправляем уникальное сообщение об успешном входе, чтобы клиент мог отобразить справку (и т.п.)
@@ -144,8 +151,8 @@ namespace GameServer
                 if (!session.Authenticate(body))
                 {
                     Console.WriteLine("[{0}]: authentication failed, disconnected.", session.ID);
-                    session.SendMessage(RemoteSession.MsgType.No, "Invalid login or password.");
-                    session.Close();
+                    try { session.SendMessage(RemoteSession.MsgType.No, "Invalid login or password."); } catch (System.IO.IOException) { }
+                    session.Close("Аутентификация не пройдена");
                     return;
                 }
                 else {
@@ -154,36 +161,37 @@ namespace GameServer
                     {
                         if ((ses.UserID == session.UserID) && (ses.Active))
                         {
-                            ses.Close();
+                            ses.Close($"Пользователь [{session.UserID}] подключился к другой сессии [{session.ID}]");
                         }
                     }
+                    Console.WriteLine("[{0}]: authentication completed.", session.ID);
+                    session.Paused = false;
+                    activeSessions.Add(session);
                 }
                 // Check other sessions for this user id
             }
             else if (loginMsg == ReaGame.RemoteSession.MsgType.RestoreSession)
             {
                 // TODO: Check for session state, base returned message on it
-                var ses = activeSessions.FirstOrDefault(x => x.ID == new Guid(body) && x.Active);
+                session = activeSessions.FirstOrDefault(x => x.ID == new Guid(body) && x.Active);
                 if ((session == null))
                 {
-                    Console.WriteLine("[{0}]: reconnection failed (using bad id {1}), disconnected.", session.ID, body);
+                    Console.WriteLine($"({client.ID}): reconnection failed (using bad id [{body}]), disconnected.");
                     client.SendMessage((byte)RemoteSession.MsgType.No, "Session token invalid or obsolete.");
                     client.Dispose();
                     return;
                 }
-                else { session = ses; session.SendMessage(RemoteSession.MsgType.RestoreSession); }
+                else {
+                    session.Reconnect(client);
+                    Console.WriteLine($"({client.ID}) Reconnected to session [{session.ID}]");
+                    session.SendMessage(RemoteSession.MsgType.RestoreSession);
+                    session.Paused = false;
+                }
             }
-
-            Console.WriteLine("[{0}]: authentication completed.", session.ID);
-            
-            activeSessions.Add(session);
-            session.Paused = false;
             while (!session.Paused)
             {
                 session.GetMessages();
             }
-
-            //session.Close();
         }
 
         /// <summary>

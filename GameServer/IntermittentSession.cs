@@ -36,6 +36,8 @@ namespace GameServer
                 { MsgType.Test, MsgTest },
                 { MsgType.Logout, MsgLogout },
                 { MsgType.GetQuizList, MsgGetQuizList },
+                { MsgType.PauseSession, MsgPause },
+                { MsgType.GetQuizInfo, MsgGetQuizInfo },
             };
         }
 
@@ -43,8 +45,9 @@ namespace GameServer
         /// Первичная аутентификация пользователя
         /// </summary>
         /// <returns>Статус аутентификации</returns>
-        public bool Authenticate(string login_message)
+        public bool Authenticate(string body)
         {
+            string login_message = Encoding.UTF8.GetString(Convert.FromBase64String(body));
             int login_length = login_message[0]; string msg = login_message.Substring(1);
             // Формат сообщения логина: 
             // Первый символ интерпретируется (не парсится!!!) как число - длина логина в символах
@@ -72,16 +75,22 @@ namespace GameServer
 
         public void GetMessages()
         {
-            string msgBody;
-            MsgType msgType = ReadMessage(out msgBody);
+            MsgType msgType = ReadMessage(out string msgBody);
+            Console.WriteLine($"[{0}]: ({msgType})({msgBody})");
             if (MsgReaders.ContainsKey(msgType)) MsgReaders[msgType](msgBody);
             else
             {
                 Console.WriteLine("[{0}]: Unknown message, aborting the connection to prevent desync", ID);
-                Close();
+                Close($"Получено сообщение неизвестного типа ({msgType})({msgBody})");
             }
         }
 
+        new public void Reconnect(ReaGame.RemoteClient cli)
+        {
+            if (client != null) client.Close();
+            client = null;
+            client = cli;
+        }
 
         #region Message handlers
         /* HANDLERS FOR CLIENT MESSAGES */
@@ -90,6 +99,7 @@ namespace GameServer
             // Последнее сообщение, передаваемое в конце пакета сообщений
             // Ставит приём сообщений сервером на паузу и отключает текущего клиента
             SendMessage(MsgType.PauseSession);
+            Pause();
         }
         private void MsgError(string body)
         {
@@ -117,14 +127,15 @@ namespace GameServer
             // TODO: append hi-score
             using (var db = new ReaGameContext())
             {
-                var obj = new JObject(
+                /*var obj = new JObject(
                     new JProperty("quiz_list",
                     new JArray(
                         from quiz in db.Quizzes
                         select JObject.FromObject(quiz)
                         )
                     )
-                );
+                );*/
+                var obj = JObject.FromObject(db.Quizzes.Select(q => new { q.QuizId, q.Name } ).ToDictionary(q => q.QuizId, q => q.Name));
                 SendMessage(MsgType.Json, obj.ToString());
             }
         }

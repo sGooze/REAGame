@@ -18,32 +18,62 @@ namespace TestClient
             body = msg_body;
         }
     }
+
+
+
+
+
     public class RemoteServer : RemoteSession
     {
-        public RemoteServer(IPEndPoint connection)
+        public Guid ServerID { get; private set; }
+        public IPEndPoint ServerIp { get; set; }
+        public RemoteServer(TcpClient cli) : base(new RemoteClient(cli))
         {
-            Client = new TcpClient();
-            try { Client.Connect(connection); }
-            catch (SocketException)
-            {
-                return;
-            }
-            clientStream = Client.GetStream();
             Active = true;
+        }
+
+        public void ResumeConnection()
+        {
+            var cli = new TcpClient();
+            // TODO: try-catch: соединение не установлено, повторите позже
+            cli.Connect(ServerIp);
+            Reconnect(new RemoteClient(cli));
+
+            SendMessage(MsgType.RestoreSession, ServerID.ToString());
+            string g;
+            ReadResponse(out g);
+        }
+
+        public void PauseConnection()
+        {
+            if (!Active) return;
+            SendMessage(MsgType.PauseSession);
+            if (ReadMessage(out string g) != MsgType.PauseSession) throw new UrgentMessageException(MsgType.Error, "something fukked up");
+            Client.Close();
         }
 
         public bool Authorize(string login, string password)
         {
-            int login_length = login.Length;
-            byte[] msg = Encoding.UTF8.GetBytes("  " + Convert.ToBase64String(Encoding.UTF8.GetBytes(login + password)));
-            msg[0] = (byte)(msg.Length - 2);
-            msg[1] = (byte)login_length;
-            clientStream.Write(msg, 0, msg.Length);
+            List<byte> msg = new List<byte>() /*{ (byte)login.Length }*/;
+            msg.AddRange(Encoding.UTF8.GetBytes(Convert.ToBase64String(Encoding.UTF8.GetBytes((char)login.Length + login + password))));
+            SendMessage(MsgType.Login, msg.ToArray());
 
-            string sessionId; int sid;
+            string sessionId;
             var status = ReadMessage(out sessionId);
-            int.TryParse(sessionId, out sid);
-            ID = sid;
+            if (status == MsgType.Login)
+            {
+                ServerID = new Guid(sessionId);
+                // После успешного логина отправляем остальные сообщения, предназначенные для сбора нужной для первого запуска информации
+                SendMessage(MsgType.GetQuizList);
+                string res;
+                ReadResponse(out res);
+                Console.WriteLine(res);
+                SendMessage(MsgType.PauseSession);
+                if (ReadResponse(out res) != MsgType.PauseSession)
+                    Console.WriteLine("PauseSession behaved strangely");
+            }
+
+            Client.Close();
             return (status == MsgType.Login);
         }
 
@@ -63,6 +93,11 @@ namespace TestClient
             return res;
         }
     }
+
+
+
+
+
 
     class Program
     {
@@ -99,14 +134,15 @@ namespace TestClient
             }
 
             Console.WriteLine("Connecting...");
-            
-            // Attempt to connect
-            server = new RemoteServer(serverEndPoint);
-            if (!server.Active)
+
+            var tcpclient = new TcpClient();
+            try { tcpclient.Connect(serverEndPoint); }
+            catch (SocketException)
             {
                 Console.WriteLine("Unable to connect to server.");
-                return;
+                goto start;
             }
+            server = new RemoteServer(tcpclient) { ServerIp = serverEndPoint };
             Console.WriteLine("Done.");
 
             // Attempt to login
@@ -119,6 +155,7 @@ namespace TestClient
                 server.Close();
                 return;
             }
+            Console.WriteLine("Authorization completed!");
 
             // Main loop
             while (server.Active)
@@ -132,13 +169,16 @@ namespace TestClient
                 else if (cl_msg == "quit") type = RemoteSession.MsgType.Logout;
                 else if (cl_msg == "get-list") type = RemoteSession.MsgType.GetQuizList;
                 else if (cl_msg == "get-quiz") type = RemoteSession.MsgType.GetQuizInfo;
+                else if (cl_msg == "crash")  type = RemoteSession.MsgType.Error;  
                 else { Console.WriteLine("Unknown command"); continue; }
 
+                server.ResumeConnection();
                 if (!server.SendMessage(type))
                 {
                     Console.WriteLine("An error has occured, unable to send a message to server.");
                     return;
                 }
+                if (type == RemoteSession.MsgType.Error) Environment.FailFast(":^)");
 
                 string in_msg = "";
                 try
@@ -152,8 +192,11 @@ namespace TestClient
                             Console.WriteLine("Server says: " + in_msg);
                             break;
                         case RemoteSession.MsgType.Null: break;
+                        case 
+                            RemoteSession.MsgType.No: Console.WriteLine(in_msg);
+                            break;
                         default:
-                            Console.WriteLine("Unknown message recieved");
+                            Console.WriteLine($"Unknown message recieved: ({type})({in_msg})");
                             break;
                     }
                 } catch (UrgentMessageException e)
@@ -169,9 +212,9 @@ namespace TestClient
                             server.Close(); break;
                         case RemoteSession.MsgType.Null: break;
                     }
+                    
                 }
-
-                
+                server.PauseConnection();
             }
             
             Console.Write("\nSession ended.\n");

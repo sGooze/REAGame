@@ -9,15 +9,29 @@ using Newtonsoft.Json;
 
 namespace ReaGame
 {
+    /// <summary>
+    /// Удалённый клиент. Реализует функции приёма и передачи данных между клиентом и сервером.
+    /// Не обрабатывает возникающие исключения!
+    /// </summary>
     public sealed class RemoteClient : IDisposable{
+#if DEBUG
+        /// <summary>
+        /// Тайм-аут сетевых операций ввода-вывода
+        /// </summary>
+        private const int IOTimeout = 100000;
+#else
         /// <summary>
         /// Тайм-аут сетевых операций ввода-вывода
         /// </summary>
         private const int IOTimeout = 10000;
+#endif
+
         public TcpClient Client { get; private set; }
         public NetworkStream clientStream { get; set; }
+        private static int id = 0;
+        public int ID { get; private set; }
 
-        public RemoteClient(TcpClient cli) { Client = cli; clientStream = cli.GetStream(); cli.ReceiveTimeout = cli.SendTimeout = IOTimeout; }
+        public RemoteClient(TcpClient cli) { Client = cli; clientStream = cli.GetStream(); cli.ReceiveTimeout = cli.SendTimeout = IOTimeout; ID = id++; }
         public void Dispose() { Client.Dispose(); }
         public void Close() { Dispose(); }
 
@@ -42,7 +56,7 @@ namespace ReaGame
             return sv;
         }
 
-        #region SendMessage
+#region SendMessage
         /// <summary>
         /// Отправка сообщения клиенту
         /// </summary>
@@ -78,7 +92,7 @@ namespace ReaGame
             response = utf_encoder.GetBytes(message);
             return SendMessage(msg_type, response);
         }
-        #endregion
+#endregion
     }
 
 
@@ -128,6 +142,13 @@ namespace ReaGame
             client = cli;
         }
 
+        protected void Reconnect(RemoteClient cli)
+        {
+            client.Close();
+            client = null;
+            client = cli;
+        }
+
         public MsgType ReadMessage(out string body)
         {
             MsgType sv;
@@ -156,9 +177,11 @@ namespace ReaGame
         /// <param name="logout_msg">не используется</param>
         public virtual void Close(string logout_msg = "")
         {
+            Console.WriteLine("[{0}]: session closed, reason: {1}", ID, logout_msg);
             if (!Active) return;
             Dispose();
             Active = false;
+            Paused = true;
         }
 
         /// <summary>
@@ -169,6 +192,7 @@ namespace ReaGame
             Paused = true;
             client.Close();
             client = null;
+            Console.WriteLine($"[{ID}]: session paused");
         }
 
         ~RemoteSession()
@@ -199,7 +223,9 @@ namespace ReaGame
                 LastActivity = DateTime.Now;
             } catch (System.IO.IOException)
             {
-                Close();
+                //Close("Ошибка IO");
+                Console.WriteLine($"[{ID}]: IO exception occured on SendMessage, session on pause");
+                Pause();
                 return false;
             }
             return true;
