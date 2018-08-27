@@ -95,7 +95,12 @@ namespace ReaGame
 #endregion
     }
 
+    public class InvalidMessageTypeException : Exception
+    {
+        public RemoteSession.MsgType RecievedMessageType;
+        public InvalidMessageTypeException(RemoteSession.MsgType msgType) : base($"Полученное сообщение имеет неверный тип ({msgType})") { RecievedMessageType = msgType; }
 
+    }
 
     public abstract class RemoteSession : IDisposable
     {
@@ -149,13 +154,27 @@ namespace ReaGame
             client = cli;
         }
 
-        public MsgType ReadMessage(out string body)
+        /// <summary>
+        /// Считывает переданное клиентом сообщение
+        /// </summary>
+        /// <param name="body">Полученное сообщение</param>
+        /// <param name="acceptedTypes">(опционально) Список разрешённых типов сообщений. Если тип полученного сообщения не будет входить в этот список, будет брошено исключение <c></c>InvalidMessageTypeException</c></param>
+        /// <returns>Тип полученного сообщения</returns>
+        /// <exception cref="InvalidMessageTypeException"></exception>
+        public MsgType ReadMessage(out string body, MsgType[] acceptedTypes = null)
         {
             MsgType sv;
             try
             {
                 sv = (MsgType)client.ReadMessage(out body);
                 LastActivity = DateTime.Now;
+                if ((acceptedTypes != null))
+                {
+                    foreach (MsgType type in acceptedTypes)
+                        if (sv == type)
+                            return sv;
+                    throw new InvalidMessageTypeException(sv);
+                }
             }
             catch (System.IO.IOException)
             {

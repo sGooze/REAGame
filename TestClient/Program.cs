@@ -172,12 +172,14 @@ namespace TestClient
                 else if (cl_msg == "crash")  type = RemoteSession.MsgType.Error;  
                 else { Console.WriteLine("Unknown command"); continue; }
 
+                DateTime cmdstart = DateTime.Now;
                 server.ResumeConnection();
                 if (!server.SendMessage(type))
                 {
                     Console.WriteLine("An error has occured, unable to send a message to server.");
                     return;
                 }
+                System.Threading.Thread.Sleep(11000);
                 if (type == RemoteSession.MsgType.Error) Environment.FailFast(":^)");
 
                 string in_msg = "";
@@ -191,6 +193,10 @@ namespace TestClient
                         case RemoteSession.MsgType.Str:
                             Console.WriteLine("Server says: " + in_msg);
                             break;
+                        case RemoteSession.MsgType.Test:
+                            DateTime cmdsrv = DateTime.FromBinary(long.Parse(in_msg));
+                            Console.WriteLine($"0 -- {(cmdsrv - cmdstart).Milliseconds} -- {(DateTime.Now - cmdstart).Milliseconds}");
+                            break;
                         case RemoteSession.MsgType.Null: break;
                         case 
                             RemoteSession.MsgType.No: Console.WriteLine(in_msg);
@@ -199,6 +205,7 @@ namespace TestClient
                             Console.WriteLine($"Unknown message recieved: ({type})({in_msg})");
                             break;
                     }
+                    server.PauseConnection();
                 } catch (UrgentMessageException e)
                 {
                     switch (e.msgType)
@@ -212,9 +219,8 @@ namespace TestClient
                             server.Close(); break;
                         case RemoteSession.MsgType.Null: break;
                     }
-                    
                 }
-                server.PauseConnection();
+                
             }
             
             Console.Write("\nSession ended.\n");

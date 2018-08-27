@@ -117,7 +117,7 @@ namespace GameServer
         {
             using (var db = new ReaGameContext())
             {
-                SendMessage(MsgType.Str, String.Format("Hello, your session id is {0}.", ID));
+                SendMessage(MsgType.Test, DateTime.Now.ToBinary().ToString());
             }
 
         }

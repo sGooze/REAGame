@@ -123,7 +123,7 @@ namespace GameServer
                 {
                     ses.Close("Session timed out");
                 }
-                Console.WriteLine("Cleaned {0} inactive sessions, {1} were timed out", 
+                Console.WriteLine("Session cleanup: {0} inactive, {1} timed out", 
                     activeSessions.RemoveAll(x => (!x.Active)), timedOut.Count());
             }
         }
