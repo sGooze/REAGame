@@ -135,6 +135,7 @@ namespace GameServer
                         )
                     )
                 );*/
+                // aaaeeeee 🐱‍🚀
                 var obj = JObject.FromObject(db.Quizzes.Select(q => new { q.QuizId, q.Name } ).ToDictionary(q => q.QuizId, q => q.Name));
                 SendMessage(MsgType.Json, obj.ToString());
             }
